@@ -87,8 +87,10 @@ class EdifyGenerator(object):
 
   def AssertDevice(self, device):
     """Assert that the device identifier is the given string."""
-    cmd = ('assert(getprop("ro.product.device") == "%s" ||\0'
-           'getprop("ro.build.product") == "%s");' % (device, device))
+    cmd = ('assert(' + 
+           ' || \0'.join(['getprop("ro.product.device") == "%s" || getprop("ro.build.product") == "%s" || getprop("ro.product.board") == "%s"'
+                         % (i, i, i) for i in device.split(",")]) + 
+           ');')
     self.script.append(self._WordWrap(cmd))
 
   def AssertSomeBootloader(self, *bootloaders):
@@ -234,12 +236,14 @@ class EdifyGenerator(object):
     else:
       # backward compatibility with older target-files that lack recovery.fstab
       if self.info["partition_type"] == "MTD":
+        partition_type, partition = common.GetTypeAndDevice(mount_point, self.info)
         self.script.append(
             ('assert(package_extract_file("%(fn)s", "/tmp/%(partition)s.img"),\n'
              '       write_raw_image("/tmp/%(partition)s.img", "%(partition)s"),\n'
              '       delete("/tmp/%(partition)s.img"));')
             % {'partition': partition, 'fn': fn})
       elif self.info["partition_type"] == "EMMC":
+        partition_type, partition = common.GetTypeAndDevice(mount_point, self.info)
         self.script.append(
             ('package_extract_file("%(fn)s", "%(dir)s%(partition)s");')
             % {'partition': partition, 'fn': fn,
