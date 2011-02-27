@@ -382,7 +382,7 @@ def WriteFullOTAPackage(input_zip, output_zip):
   script.Print("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-")
   script.Print("Oh man, here we go!")
   script.Print("")
-  script.Print(" t3hh4xx0r.com ")
+  script.Print(" thelinuxmotion.org ")
   script.Print("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-")
   if OPTIONS.wipe_user_data:
     script.FormatPartition("/data")
