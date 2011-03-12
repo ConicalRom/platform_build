@@ -4,7 +4,8 @@
 ifneq "" "$(filter eng.%,$(BUILD_NUMBER))"
   # BUILD_NUMBER has a timestamp in it, which means that
   # it will change every time.  Pick a stable value.
-  FILE_NAME_TAG := eng.$(USER)
+
+  FILE_NAME_TAG := 
 else
   FILE_NAME_TAG := $(BUILD_NUMBER)
 endif
@@ -318,7 +319,7 @@ $(INSTALLED_RAMDISK_TARGET): $(MKBOOTFS) $(INTERNAL_RAMDISK_FILES) | $(MINIGZIP)
 	$(hide) $(MKBOOTFS) $(TARGET_ROOT_OUT) | $(MINIGZIP) > $@
 
 
-ifneq ($(strip $(TARGET_NO_KERNEL)),true)
+ifeq (,$(filter true, $(TARGET_NO_KERNEL) $(TARGET_NO_BOOT)))
 
 # -----------------------------------------------------------------
 # the boot image, which is a collection of other images.
@@ -362,7 +363,7 @@ $(INSTALLED_BOOTIMAGE_TARGET): $(MKBOOTIMG) $(INTERNAL_BOOTIMAGE_FILES)
 	$(hide) $(call assert-max-image-size,$@,$(BOARD_BOOTIMAGE_PARTITION_SIZE),raw)
 endif # TARGET_BOOTIMAGE_USE_EXT2
 
-else	# TARGET_NO_KERNEL
+else	# TARGET_NO_KERNEL/TARGET_NO_BOOT
 # HACK: The top-level targets depend on the bootimage.  Not all targets
 # can produce a bootimage, though, and emulator targets need the ramdisk
 # instead.  Fake it out by calling the ramdisk the bootimage.
@@ -1030,17 +1031,33 @@ name := $(TARGET_PRODUCT)
 ifeq ($(TARGET_BUILD_TYPE),debug)
   name := $(name)_debug
 endif
-name := $(name)-ota-$(FILE_NAME_TAG)
+
+name := $(name)-$(build-version)
 
 INTERNAL_OTA_PACKAGE_TARGET := $(PRODUCT_OUT)/$(name).zip
 
 $(INTERNAL_OTA_PACKAGE_TARGET): KEY_CERT_PAIR := $(DEFAULT_KEY_CERT_PAIR)
 
+ifeq ($(TARGET_NO_BOOT),)
+#default to "false"
+$(INTERNAL_OTA_PACKAGE_TARGET): bootex := false
+else
+$(INTERNAL_OTA_PACKAGE_TARGET): bootex := $(TARGET_NO_BOOT)
+endif
+ifeq ($(TARGET_NO_RECOVERY),)
+#default to "false"
+$(INTERNAL_OTA_PACKAGE_TARGET): recoveryex := false
+else
+$(INTERNAL_OTA_PACKAGE_TARGET): recoveryex := $(TARGET_NO_RECOVERY)
+endif
+
 $(INTERNAL_OTA_PACKAGE_TARGET): $(BUILT_TARGET_FILES_PACKAGE) $(OTATOOLS)
 	@echo "Package OTA: $@"
 	$(hide) ./build/tools/releasetools/ota_from_target_files -v \
 	   -p $(HOST_OUT) \
-           -k $(KEY_CERT_PAIR) \
+		-k $(KEY_CERT_PAIR) \
+		--bootex=$(bootex) \
+		--recoveryex=$(recoveryex) \
            $(BUILT_TARGET_FILES_PACKAGE) $@
 
 .PHONY: otapackage
@@ -1053,6 +1070,28 @@ name := $(TARGET_PRODUCT)
 ifeq ($(TARGET_BUILD_TYPE),debug)
   name := $(name)_debug
 endif
+
+
+ifeq ($(TARGET_NO_BOOT),true)
+   TARGET_OTA_NO_BOOT := true
+endif
+ifeq ($(TARGET_OTA_NO_BOOT),)
+#default to "false"
+$(INTERNAL_OTA_PACKAGE_TARGET): bootex := false
+else
+$(INTERNAL_OTA_PACKAGE_TARGET): bootex := $(TARGET_OTA_NO_BOOT)
+endif
+
+ifeq ($(TARGET_NO_RECOVERY),true)
+   TARGET_OTA_NO_RECOVERY := true
+endif
+ifeq ($(TARGET_OTA_NO_RECOVERY),)
+#default to "false"
+$(INTERNAL_OTA_PACKAGE_TARGET): recoverex := false
+else
+$(INTERNAL_OTA_PACKAGE_TARGET): recoveryex := $(TARGET_OTA_NO_RECOVERY)
+endif
+
 name := $(name)-img-$(FILE_NAME_TAG)
 
 INTERNAL_UPDATE_PACKAGE_TARGET := $(PRODUCT_OUT)/$(name).zip
@@ -1073,6 +1112,13 @@ $(INTERNAL_UPDATE_PACKAGE_TARGET): $(BUILT_TARGET_FILES_PACKAGE) $(OTATOOLS)
 
 .PHONY: updatepackage
 updatepackage: $(INTERNAL_UPDATE_PACKAGE_TARGET)
+
+.PHONY: otapackage bacon
+otapackage: $(INTERNAL_OTA_PACKAGE_TARGET)
+bacon: otapackage
+	$(hide) \
+		WANT_SQUASHFS=$(WANT_SQUASHFS) \
+		./vendor/omfgb/tools/squisher
 
 endif    # TARGET_NO_KERNEL != true
 endif    # TARGET_DEVICE != generic
