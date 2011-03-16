@@ -970,9 +970,27 @@ $(INTERNAL_OTA_PACKAGE_TARGET): KEY_CERT_PAIR := $(DEFAULT_KEY_CERT_PAIR)
 
 ifeq ($(TARGET_OTA_SCRIPT_MODE),)
 # default to "auto"
-$(INTERNAL_OTA_PACKAGE_TARGET): scriptmode := auto
+$(INTERNAL_OTA_PACKAGE_TARGET): scriptmode := edify
 else
 $(INTERNAL_OTA_PACKAGE_TARGET): scriptmode := $(TARGET_OTA_SCRIPT_MODE)
+endif
+ifeq ($(TARGET_NO_KERNEL),true)
+TARGET_OTA_NO_KERNEL := true
+endif
+
+ifeq ($(TARGET_OTA_NO_RECOVERY),)
+# default to "false"
+$(INTERNAL_OTA_PACKAGE_TARGET): no_recovery := false
+else ifeq ($(TARGET_NO_RECOVERY),true)
+TARGET_OTA_NO_RECOVERY := true
+else
+$(INTERNAL_OTA_PACKAGE_TARGET): no_recovery := $(TARGET_OTA_NO_RECOVERY)
+endif
+
+ifeq ($(TARGET_OTA_ASSERT_DEVICE),)
+$(INTERNAL_OTA_PACKAGE_TARGET): override_device := auto
+else
+$(INTERNAL_OTA_PACKAGE_TARGET): override_device := $(TARGET_OTA_ASSERT_DEVICE)
 endif
 
 $(INTERNAL_OTA_PACKAGE_TARGET): $(BUILT_TARGET_FILES_PACKAGE) $(OTATOOLS)
@@ -981,6 +999,9 @@ $(INTERNAL_OTA_PACKAGE_TARGET): $(BUILT_TARGET_FILES_PACKAGE) $(OTATOOLS)
 	   -m $(scriptmode) \
 	   -p $(HOST_OUT) \
            -k $(KEY_CERT_PAIR) \
+	   --no_recovery=$(no_recovery) \
+           --no_kernel=$(no_kernel) \
+	   --override_device=$(override_device) \
            $(BUILT_TARGET_FILES_PACKAGE) $@
 
 .PHONY: otapackage

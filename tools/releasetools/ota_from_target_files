@@ -48,6 +48,23 @@ Usage:  ota_from_target_files [flags] input_target_files output_ota_package
       Specify 'amend' or 'edify' scripts, or 'auto' to pick
       automatically (this is the default).
 
+  --backup <boolean>
+      Enable or disable the execution of backuptool.sh.
+      Disabled by default.
+
+  --no_recovery <boolean>
+      Enable or disable the exclusion of recovery.img or recovery/
+      Disabled by default (recovery will be included). Enable in *.mk
+      with TARGET_NO_RECOVERY := true
+
+  --no_kernel <boolean>
+      Enable or disable the exclusion of prebuilt or compiled kernel.
+      Disabled by default (kernel will be included). Enable in *.mk
+      with TARGET_NO_KERNEL := true
+
+  --override_device <device>
+      Override device-specific asserts. Can be a comma-separated list.
+
 """
 
 import sys
@@ -60,7 +77,6 @@ import copy
 import errno
 import os
 import re
-import sha
 import subprocess
 import tempfile
 import threading
@@ -71,6 +87,11 @@ import common
 import amend_generator
 import edify_generator
 import both_generator
+
+if sys.version_info < (2,5):
+  import sha
+else:
+  import hashlib
 
 OPTIONS = common.OPTIONS
 OPTIONS.package_key = "build/target/product/security/testkey"
@@ -83,6 +104,10 @@ OPTIONS.omit_prereq = False
 OPTIONS.extra_script = None
 OPTIONS.script_mode = 'auto'
 OPTIONS.worker_threads = 3
+OPTIONS.backuptool = False
+OPTIONS.no_recovery = False
+OPTIONS.no_kernel = False
+OPTIONS.override_device = 'auto'
 
 def MostPopularKey(d, default):
   """Given a dict, return the key corresponding to the largest
@@ -96,7 +121,7 @@ def MostPopularKey(d, default):
 def IsSymlink(info):
   """Return true if the zipfile.ZipInfo object passed in represents a
   symlink."""
-  return (info.external_attr >> 16) == 0120777
+  return (info.external_attr >> 16) == 0120777 or (info.external_attr >> 16) == 0120755
 
 
 
@@ -296,7 +321,10 @@ def SignOutput(temp_zip_name, output_zip_name):
 
 
 def AppendAssertions(script, input_zip):
-  device = GetBuildProp("ro.product.device", input_zip)
+  if OPTIONS.override_device == "auto":
+    device = GetBuildProp("ro.product.device", input_zip)
+  else:
+    device = OPTIONS.override_device
   script.AssertDevice(device)
 
 
@@ -317,14 +345,18 @@ def MakeRecoveryPatch(output_zip, recovery_img, boot_img):
 
   d = Difference(recovery_img, boot_img)
   _, _, patch = d.ComputePatch()
-  common.ZipWriteStr(output_zip, "recovery/recovery-from-boot.p", patch)
-  Item.Get("system/recovery-from-boot.p", dir=False)
+  if OPTIONS.no_recovery == False:
+    common.ZipWriteStr(output_zip, "recovery/recovery-from-boot.p", patch)
+    Item.Get("system/recovery-from-boot.p", dir=False)
 
   # Images with different content will have a different first page, so
   # we check to see if this recovery has already been installed by
   # testing just the first 2k.
   HEADER_SIZE = 2048
-  header_sha1 = sha.sha(recovery_img.data[:HEADER_SIZE]).hexdigest()
+  if sys.version_info < (2,5):
+    header_sha1 = sha.sha(recovery_img.data[:HEADER_SIZE]).hexdigest()
+  else:
+    header_sha1 = hashlib.sha1(recovery_img.data[:HEADER_SIZE]).hexdigest()
   sh = """#!/system/bin/sh
 if ! applypatch -c MTD:recovery:%(header_size)d:%(header_sha1)s; then
   log -t recovery "Installing new recovery image"
@@ -358,13 +390,18 @@ def WriteFullOTAPackage(input_zip, output_zip):
               "post-timestamp": GetBuildProp("ro.build.date.utc", input_zip),
               }
 
+  modver = GetBuildProp("ro.modversion", input_zip)
+  if modver is not None:
+    metadata.update({"modver": modver})
+    script.Print("Welcome to %(modver)s!" % metadata)
+
   device_specific = common.DeviceSpecificParams(
-      input_zip=input_zip,
-      input_version=GetRecoveryAPIVersion(input_zip),
-      output_zip=output_zip,
-      script=script,
-      input_tmp=OPTIONS.input_tmp,
-      metadata=metadata)
+    input_zip=input_zip,
+    input_version=GetRecoveryAPIVersion(input_zip),
+    output_zip=output_zip,
+    script=script,
+    input_tmp=OPTIONS.input_tmp,
+    metadata=metadata)
 
   if not OPTIONS.omit_prereq:
     ts = GetBuildProp("ro.build.date.utc", input_zip)
@@ -372,6 +409,8 @@ def WriteFullOTAPackage(input_zip, output_zip):
 
   AppendAssertions(script, input_zip)
   device_specific.FullOTA_Assertions()
+  if OPTIONS.backuptool:
+    script.RunBackup("backup")
 
   script.ShowProgress(0.5, 0)
 
@@ -379,28 +418,44 @@ def WriteFullOTAPackage(input_zip, output_zip):
     script.FormatPartition("userdata")
 
   script.FormatPartition("system")
+
   script.Mount("MTD", "system", "/system")
-  script.UnpackPackageDir("recovery", "/system")
+  script.ShowProgress(0.5, 40)
+  if not OPTIONS.no_recovery:
+    script.UnpackPackageDir("recovery", "/system")
   script.UnpackPackageDir("system", "/system")
 
   symlinks = CopySystemFiles(input_zip, output_zip)
   script.MakeSymlinks(symlinks)
 
-  boot_img = File("boot.img", common.BuildBootableImage(
-      os.path.join(OPTIONS.input_tmp, "BOOT")))
-  recovery_img = File("recovery.img", common.BuildBootableImage(
-      os.path.join(OPTIONS.input_tmp, "RECOVERY")))
-  MakeRecoveryPatch(output_zip, recovery_img, boot_img)
+  if not OPTIONS.no_kernel:
+    boot_img = File("boot.img", common.BuildBootableImage(
+        os.path.join(OPTIONS.input_tmp, "BOOT")))
+  if not OPTIONS.no_recovery:
+    recovery_img = File("recovery.img", common.BuildBootableImage(
+        os.path.join(OPTIONS.input_tmp, "RECOVERY")))
+    if not OPTIONS.no_kernel:
+      MakeRecoveryPatch(output_zip, recovery_img, boot_img)
 
   Item.GetMetadata(input_zip)
   Item.Get("system").SetPermissions(script)
 
-  common.CheckSize(boot_img.data, "boot.img")
-  common.ZipWriteStr(output_zip, "boot.img", boot_img.data)
+  if not OPTIONS.no_kernel:
+    common.CheckSize(boot_img.data, "boot.img")
+    common.ZipWriteStr(output_zip, "boot.img", boot_img.data)
   script.ShowProgress(0.2, 0)
 
+  if OPTIONS.backuptool:
+    script.ShowProgress(0.2, 10)
+    script.RunBackup("restore")
+
   script.ShowProgress(0.2, 10)
-  script.WriteRawImage("boot", "boot.img")
+  if not OPTIONS.no_kernel:
+    script.RunVerifyCachePartitionSize()
+
+  script.ShowProgress(0.2, 10)
+  if not OPTIONS.no_kernel:
+    script.WriteRawImage("boot", "boot.img")
 
   script.ShowProgress(0.1, 0)
   device_specific.FullOTA_InstallEnd()
@@ -424,7 +479,10 @@ class File(object):
     self.name = name
     self.data = data
     self.size = len(data)
-    self.sha1 = sha.sha(data).hexdigest()
+    if sys.version_info < (2,5):
+      self.sha1 = sha.sha(data).hexdigest()
+    else:
+      self.sha1 = hashlib.sha1(data).hexdigest()
 
   def WriteToTemp(self):
     t = tempfile.NamedTemporaryFile()
@@ -653,7 +711,10 @@ def WriteIncrementalOTAPackage(target_zip, source_zip, output_zip):
       verbatim_targets.append((tf.name, tf.size))
     else:
       common.ZipWriteStr(output_zip, "patch/" + tf.name + ".p", d)
-      patch_list.append((tf.name, tf, sf, tf.size, sha.sha(d).hexdigest()))
+      if sys.version_info < (2,5):
+        patch_list.append((tf.name, tf, sf, tf.size, sha.sha(d).hexdigest()))
+      else:
+        patch_list.append((tf.name, tf, sf, tf.size, hashlib.sha1(d).hexdigest()))
       largest_source_size = max(largest_source_size, sf.size)
 
   source_fp = GetBuildProp("ro.build.fingerprint", source_zip)
@@ -853,13 +914,21 @@ def main(argv):
     elif o in ("-w", "--wipe_user_data"):
       OPTIONS.wipe_user_data = True
     elif o in ("-n", "--no_prereq"):
-      OPTIONS.omit_prereq = True
+      OPTIONS.omit_prereq = bool(a.lower() == 'true')
     elif o in ("-e", "--extra_script"):
       OPTIONS.extra_script = a
     elif o in ("-m", "--script_mode"):
       OPTIONS.script_mode = a
     elif o in ("--worker_threads"):
       OPTIONS.worker_threads = int(a)
+    elif o in ("--backup"):
+      OPTIONS.backuptool = bool(a.lower() == 'true')
+    elif o in ("--no_kernel"):
+      OPTIONS.no_kernel = bool(a.lower() == 'true')
+    elif o in ("--no_recovery"):
+      OPTIONS.no_recovery = bool(a.lower() == 'true')
+    elif o in ("--override_device"):
+      OPTIONS.override_device = a
     else:
       return False
     return True
@@ -870,10 +939,14 @@ def main(argv):
                                               "package_key=",
                                               "incremental_from=",
                                               "wipe_user_data",
-                                              "no_prereq",
+                                              "no_prereq=",
                                               "extra_script=",
                                               "script_mode=",
-                                              "worker_threads="],
+                                              "worker_threads=",
+                                              "backup=",
+                                              "no_recovery=",
+                                              "no_kernel=",
+                                              "override_device="],
                              extra_option_handler=option_handler)
 
   if len(args) != 2:
@@ -885,6 +958,9 @@ def main(argv):
 
   if OPTIONS.extra_script is not None:
     OPTIONS.extra_script = open(OPTIONS.extra_script).read()
+
+  if OPTIONS.no_kernel and not OPTIONS.no_recovery:
+    raise ValueError('no_kernel requires no_recovery (mkbootimg limitation).')
 
   print "unzipping target target-files..."
   OPTIONS.input_tmp = common.UnzipTemp(args[0])
@@ -949,3 +1025,4 @@ if __name__ == '__main__':
     print "   ERROR: %s" % (e,)
     print
     sys.exit(1)
+
