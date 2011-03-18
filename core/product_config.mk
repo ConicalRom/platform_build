@@ -196,6 +196,7 @@ $(check-all-products)
 # Convert a short name like "sooner" into the path to the product
 # file defining that product.
 #
+
 INTERNAL_PRODUCT := $(call resolve-short-product-name, $(TARGET_PRODUCT))
 #$(error TARGET_PRODUCT $(TARGET_PRODUCT) --> $(INTERNAL_PRODUCT))
 

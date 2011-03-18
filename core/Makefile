@@ -59,21 +59,48 @@ ADDITIONAL_BUILD_PROPERTIES := \
 # A list of arbitrary tags describing the build configuration.
 # Force ":=" so we can use +=
 BUILD_VERSION_TAGS := $(BUILD_VERSION_TAGS)
-ifeq ($(TARGET_BUILD_TYPE),debug)
-  BUILD_VERSION_TAGS += debug
+ifeq ($(VERSION_TAGS_OVERIDES),)
+VERSION_TAGS_OVERIDES := false
 endif
+ifeq ($(VERSION_TAGS_OVERIDES),false)
+	ifeq ($(TARGET_BUILD_TYPE),debug)
+	  BUILD_VERSION_TAGS += debug
+	endif
+
 # Apps are always signed with test keys, and may be re-signed in a post-build
 # step.  If that happens, the "test-keys" tag will be removed by that step.
 BUILD_VERSION_TAGS += test-keys
 BUILD_VERSION_TAGS := $(subst $(space),$(comma),$(sort $(BUILD_VERSION_TAGS)))
 
+else ifeq($(VERSION_TAGS_OVERIDES),true)
+
+BUILD_VERSION_TAGS := $(BUILD_VERSION_TAGS)
+BUILD_VERSION_TAGS := $(subst $(space),$(comma),$(sort $(BUILD_VERSION_TAGS)))
+
+endif
+
+
+
 # A human-readable string that descibes this build in detail.
+ifeq ($(BUILD_DESC_SET_OVERIDE),)
+BUILD_DESC_SET_OVERIDE := false
+endif
+ifeq ($(BUILD_DESC_SET_OVERIDE),false)
 build_desc := $(TARGET_PRODUCT)-$(TARGET_BUILD_VARIANT) $(PLATFORM_VERSION) $(BUILD_ID) $(BUILD_NUMBER) $(BUILD_VERSION_TAGS)
+else ifeq ($BUILD_DESC_SET_OVERIDE),true)
+build_desc :=$(build_desc)
+endif
+
 $(INSTALLED_BUILD_PROP_TARGET): PRIVATE_BUILD_DESC := $(build_desc)
 
 # The string used to uniquely identify this build;  used by the OTA server.
 ifeq (,$(strip $(BUILD_FINGERPRINT)))
-  BUILD_FINGERPRINT := $(PRODUCT_BRAND)/$(TARGET_PRODUCT)/$(TARGET_DEVICE)/$(TARGET_BOOTLOADER_BOARD_NAME):$(PLATFORM_VERSION)/$(BUILD_ID)/$(BUILD_NUMBER):$(TARGET_BUILD_VARIANT)/$(BUILD_VERSION_TAGS)
+
+	ifeq ($(FINGERPRINT_DEFINED), false)
+  	BUILD_FINGERPRINT := $(PRODUCT_BRAND)/$(TARGET_PRODUCT)/$(TARGET_DEVICE)/$(TARGET_BOOTLOADER_BOARD_NAME):$(PLATFORM_VERSION)/$(BUILD_ID)/$(BUILD_NUMBER):$(TARGET_BUILD_VARIANT)/$(BUILD_VERSION_TAGS)
+  	else ifeq($(FINGERPRINT_DEFINED), true)
+	BUILD_FINGERPRINT := $(BUILD_FINGERPRINT)
+	endif
 endif
 ifneq ($(words $(BUILD_FINGERPRINT)),1)
   $(error BUILD_FINGERPRINT cannot contain spaces: "$(BUILD_FINGERPRINT)")

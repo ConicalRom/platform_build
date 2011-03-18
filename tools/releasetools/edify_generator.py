@@ -86,8 +86,10 @@ class EdifyGenerator(object):
 
   def AssertDevice(self, device):
     """Assert that the device identifier is the given string."""
-    cmd = ('assert(getprop("ro.product.device") == "%s" ||\0'
-           'getprop("ro.build.product") == "%s");' % (device, device))
+    cmd = ('assert(' + 
+           ' || \0'.join(['getprop("ro.product.device") == "%s" || getprop("ro.build.product") == "%s" || getprop("ro.product.board") == "%s"'
+                         % (i, i, i) for i in device.split(",")]) + 
+           ');')
     self.script.append(self._WordWrap(cmd))
 
   def AssertSomeBootloader(self, *bootloaders):
@@ -97,6 +99,16 @@ class EdifyGenerator(object):
                          for b in bootloaders]) +
            ");")
     self.script.append(self._WordWrap(cmd))
+
+  def RunBackup(self, command):
+    self.script.append('package_extract_file("system/bin/backuptool.sh", "/tmp/backuptool.sh");')
+    self.script.append('set_perm(0, 0, 0777, "/tmp/backuptool.sh");')
+    self.script.append(('run_program("/tmp/backuptool.sh", "%s");' % command))
+
+  def RunVerifyCachePartitionSize(self):
+    self.script.append('package_extract_file("system/bin/verify_cache_partition_size.sh", "/tmp/verify_cache_partition_size.sh");')
+    self.script.append('set_perm(0, 0, 0777, "/tmp/verify_cache_partition_size.sh");')
+    self.script.append('run_program("/tmp/verify_cache_partition_size.sh");')
 
   def ShowProgress(self, frac, dur):
     """Update the progress bar, advancing it over 'frac' over the next
@@ -243,3 +255,4 @@ class EdifyGenerator(object):
       data = open(os.path.join(input_path, "updater")).read()
     common.ZipWriteStr(output_zip, "META-INF/com/google/android/update-binary",
                        data, perms=0755)
+
